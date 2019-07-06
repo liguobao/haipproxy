@@ -4,23 +4,14 @@ This module provides basic distributed spider, inspired by scrapy-redis
 from scrapy import signals
 from scrapy.http import Request
 from scrapy.exceptions import DontCloseSpider
-from scrapy.spiders import (
-    Spider, CrawlSpider)
+from scrapy.spiders import Spider
 from scrapy_splash.request import SplashRequest
-# from scrapy.utils.log import configure_logging
 
-# from logger import crawler_logger
 from ..utils import get_redis_conn
-from ..config.settings import (
-    VALIDATOR_FEED_SIZE, SPIDER_FEED_SIZE)
+from ..config.settings import SPIDER_FEED_SIZE
 
 
-# configure_logging(install_root_handler=True)
-__all__ = ['RedisSpider', 'RedisAjaxSpider',
-           'RedisCrawlSpider', 'ValidatorRedisSpider']
-
-
-class RedisMixin(object):
+class RedisSpider(Spider):
     keyword_encoding = 'utf-8'
     proxy_mode = 0
     # if use_set=True, spider fetches data from set other than list
@@ -34,12 +25,11 @@ class RedisMixin(object):
     def setup_redis(self, crawler):
         """send signals when the spider is free"""
         self.redis_batch_size = SPIDER_FEED_SIZE
-        self.redis_con = get_redis_conn()
-
-        crawler.signals.connect(self.spider_idle, signal=signals.spider_idle)
+        self.redis_conn = get_redis_conn()
+        # crawler.signals.connect(self.spider_idle, signal=signals.spider_idle)
 
     def next_requests(self):
-        fetch_one = self.redis_con.spop if self.use_set else self.redis_con.lpop
+        fetch_one = self.redis_conn.spop if self.use_set else self.redis_conn.lpop
         found = 0
         while found < self.redis_batch_size:
             data = fetch_one(self.task_queue)
@@ -51,8 +41,8 @@ class RedisMixin(object):
                 yield req
                 found += 1
 
-        # crawler_logger.info('Read {} requests from {}'.format(found, self.task_queue))
-        print('Read {} requests from {}'.format(found, self.task_queue))
+        self.logger.info('Read {} requests from {}'.format(
+            found, self.task_queue))
 
     def schedule_next_requests(self):
         for req in self.next_requests():
@@ -62,16 +52,6 @@ class RedisMixin(object):
         self.schedule_next_requests()
         raise DontCloseSpider
 
-
-class RedisSpider(RedisMixin, Spider):
-    @classmethod
-    def from_crawler(cls, crawler, *args, **kwargs):
-        obj = super().from_crawler(crawler, *args, **kwargs)
-        obj.setup_redis(crawler)
-        return obj
-
-
-class RedisCrawlSpider(RedisMixin, CrawlSpider):
     @classmethod
     def from_crawler(cls, crawler, *args, **kwargs):
         obj = super().from_crawler(crawler, *args, **kwargs)
@@ -81,7 +61,7 @@ class RedisCrawlSpider(RedisMixin, CrawlSpider):
 
 class RedisAjaxSpider(RedisSpider):
     def next_requests(self):
-        fetch_one = self.redis_con.spop if self.use_set else self.redis_con.lpop
+        fetch_one = self.redis_conn.spop if self.use_set else self.redis_conn.lpop
         found = 0
         while found < self.redis_batch_size:
             data = fetch_one(self.task_queue)
@@ -99,35 +79,5 @@ class RedisAjaxSpider(RedisSpider):
                 yield req
                 found += 1
 
-        # crawler_logger.info('Read {} requests from {}'.format(found, self.task_queue))
-        print('Read {} requests from {}'.format(found, self.task_queue))
-
-
-class ValidatorRedisSpider(RedisSpider):
-    """Scrapy only supports https and http proxy"""
-
-    def setup_redis(self, crawler):
-        super().setup_redis(crawler)
-        self.redis_batch_size = VALIDATOR_FEED_SIZE
-
-    def next_requests(self):
-        yield from self.next_requests_process(self.task_queue)
-
-    def next_requests_process(self, task_queue):
-        fetch_one = self.redis_con.spop if self.use_set else self.redis_con.lpop
-        found = 0
-        while found < self.redis_batch_size:
-            data = fetch_one(task_queue)
-            if not data:
-                break
-            proxy_url = data.decode()
-            for url in self.urls:
-                req = Request(url, meta={'proxy': proxy_url},
-                              callback=self.parse, errback=self.parse_error)
-                yield req
-                found += 1
-        # crawler_logger.info('Read {} ip proxies from {}'.format(found, task_queue))
-        print('Read {} ip proxies from {}'.format(found, task_queue))
-
-    def parse_error(self, failure):
-        raise NotImplementedError
+        self.logger.info('Read {} requests from {}'.format(
+            found, self.task_queue))

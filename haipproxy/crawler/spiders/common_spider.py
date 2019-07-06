@@ -1,38 +1,82 @@
 """
 Basic proxy ip crawler.
 """
-from haipproxy.config.settings import SPIDER_COMMON_TASK
+import ipaddress
+from urllib.parse import urlparse
+
+import scrapy
+
+from haipproxy.config.rules import PARSE_MAP
 from ..redis_spiders import RedisSpider
 from ..items import ProxyUrlItem
 from .base import BaseSpider
 
 
-# notice multi inheritance order in python
-class CommonSpider(BaseSpider, RedisSpider):
-    name = 'common'
-    task_queue = SPIDER_COMMON_TASK
+class ProxySpider(scrapy.Spider):
+    name = 'proxy'
+    custom_settings = {
+        'ITEM_PIPELINES': {
+            'haipproxy.crawler.pipelines.ProxyIPPipeline': 200,
+        },
+        'USER_AGENT': 'Mozilla/6.0',
+    }
 
-    def __init__(self):
-        super().__init__()
-        self.parser_maps.setdefault('myproxy', self.parse_my_proxy)
+    def start_requests(self):
+        urls = [
+            'https://www.xicidaili.com/nn/1',
+            'https://www.kuaidaili.com/free/inha/1/',
+            'http://ip.kxdaili.com/dailiip/1/1.html#ip',
+            'http://ip.kxdaili.com/dailiip/2/1.html#ip',
+            'https://www.xroxy.com/free-proxy-lists/?port=&type=Not_transparent&ssl=&country=&latency=&reliability=2500',
+        ]
+        for url in urls:
+            yield scrapy.Request(url=url, callback=self.parse)
 
-    def parse_my_proxy(self, response):
-        protocols = None
-        if self.exists(response.url, 'socks-4'):
-            protocols = ['socks4']
-        if self.exists(response.url, 'socks-5'):
-            protocols = ['socks5']
+    def parse(self, response):
+        site = urlparse(response.url).hostname.split('.')[1]
+        debug = False
+        if debug:
+            from scrapy.shell import inspect_response
+            inspect_response(response, self)
+            from scrapy.utils.response import open_in_browser
+            open_in_browser(response)
+        row_xpath = PARSE_MAP[site].get('row_xpath', '//table/tbody/tr')
+        col_xpath = PARSE_MAP[site].get('col_xpath', 'td')
+        ip_pos = PARSE_MAP[site].get('ip_pos', 0)
+        port_pos = PARSE_MAP[site].get('port_pos', 1)
+        protocal_pos = PARSE_MAP[site].get('protocal_pos', 2)
+        rows = response.xpath(row_xpath)
+        for row in rows:
+            cols = row.xpath(col_xpath)
+            ip = cols[ip_pos].xpath('text()').get()
+            port = cols[port_pos].xpath('text()').get()
+            for protocol in self.get_protocols(
+                    cols[protocal_pos].xpath('text()').get().lower()):
+                if self.is_valid_proxy(ip, port, protocol):
+                    yield ProxyUrlItem(url=f'{protocol}://{ip}:{port}')
+                else:
+                    self.logger.error(
+                        f'invalid proxy: {protocol}://{ip}:{port}')
 
-        items = list()
-        infos = response.css('.list ::text').extract()
-        for info in infos:
-            if ':' not in info:
-                continue
-            pos = info.find('#')
-            if pos != -1:
-                info = info[:info.find('#')]
-            ip, port = info.split(':')
-            protocols = self.default_protocols if not protocols else protocols
-            for protocol in protocols:
-                items.append(ProxyUrlItem(url=self.construct_proxy_url(protocol, ip, port)))
-        return items
+    def get_protocols(self, protocol):
+        if ',' in protocol:
+            return protocol.split(',')
+        elif '4/5' in protocol:
+            return ['sock4', 'sock5']
+        elif protocol in ['distorting', 'anonymous']:
+            return ['http', 'https']
+        else:
+            return [protocol]
+
+    def is_valid_proxy(self, ip, port, protocol):
+        try:
+            ipaddress.ip_address(ip)
+        except:
+            return False
+        return 0 <= int(port) and int(port) <= 65535 and protocol in [
+            'http', 'https', 'sock4', 'sock5'
+        ]
+
+
+class CommonSpider(BaseSpider):
+    pass

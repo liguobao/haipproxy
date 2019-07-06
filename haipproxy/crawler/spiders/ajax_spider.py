@@ -1,7 +1,7 @@
 """
 Ajax proxy ip crawler with scrapy-splash
 """
-from haipproxy.config.settings import SPIDER_AJAX_TASK
+from haipproxy.config.rules import CRAWLER_QUEUE_MAPS
 from ..redis_spiders import RedisAjaxSpider
 from ..items import ProxyUrlItem
 from .base import BaseSpider
@@ -9,7 +9,7 @@ from .base import BaseSpider
 
 class AjaxSpider(BaseSpider, RedisAjaxSpider):
     name = 'ajax'
-    task_queue = SPIDER_AJAX_TASK
+    task_queue = CRAWLER_QUEUE_MAPS[name]
 
     def __init__(self):
         super().__init__()
@@ -19,15 +19,13 @@ class AjaxSpider(BaseSpider, RedisAjaxSpider):
         infos = response.xpath('//tr')[1:]
         items = list()
         for info in infos:
-            proxy_detail = info.xpath('td[1]//*[name(.)!="p"]/text()').extract()
+            proxy_detail = info.xpath(
+                'td[1]//*[name(.)!="p"]/text()').extract()
             ip = "".join(proxy_detail[:-1])
             port = proxy_detail[-1]
             protocols = self.procotol_extractor(info.extract())
             for protocol in protocols:
-                items.append(ProxyUrlItem(url=self.construct_proxy_url(protocol, ip, port)))
+                items.append(
+                    ProxyUrlItem(
+                        url=self.construct_proxy_url(protocol, ip, port)))
         return items
-
-
-
-
-

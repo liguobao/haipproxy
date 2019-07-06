@@ -3,17 +3,19 @@ import time
 
 import redis
 
-from haipproxy.config.settings import (
-    REDIS_HOST, REDIS_PORT, REDIS_DB,
-    REDIS_PASSWORD, LOCKER_PREFIX)
+from haipproxy.config.settings import (REDIS_HOST, REDIS_PORT, REDIS_DB,
+                                       LOCKER_PREFIX)
+
+REDIS_POOL = None
 
 
-def get_redis_conn(**kwargs):
-    host = kwargs.get('host', REDIS_HOST)
-    port = kwargs.get('port', REDIS_PORT)
-    db = kwargs.get('db', REDIS_DB)
-    password = kwargs.get('password', REDIS_PASSWORD)
-    return redis.StrictRedis(host, port, db, password)
+def get_redis_conn():
+    global REDIS_POOL
+    if REDIS_POOL == None:
+        REDIS_POOL = redis.ConnectionPool(host=REDIS_HOST,
+                                          port=REDIS_PORT,
+                                          db=REDIS_DB)
+    return redis.StrictRedis(connection_pool=REDIS_POOL)
 
 
 def acquire_lock(conn, lock_name, acquire_timeout=10, lock_timeout=10):
